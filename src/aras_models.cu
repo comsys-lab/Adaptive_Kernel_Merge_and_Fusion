@@ -1,3 +1,12 @@
+/*
+ * aras_models.cu - AlexNet, ResNet18 and VGG16 split into one host function
+ * per layer (alex_first_conv(), res_Block_B_conv(), vgg_third_fc(), ...).
+ *
+ * Built as aras_models.so. The per-layer entry points let the Python side
+ * choose the layer order: experiments_aras.py interleaves the layers of
+ * different models, and experiments_sequential.py runs them back to back.
+ */
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -5,7 +14,7 @@
 #include <math.h>
 #include <time.h>
 
-#include "Kernel.cu"
+#include "kernels.cu"
 
 #define INPUT_SIZE 224*224*3
 

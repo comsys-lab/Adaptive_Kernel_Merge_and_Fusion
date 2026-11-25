@@ -1,1 +1,0 @@
-nvcc Vgg16.cu -o VN

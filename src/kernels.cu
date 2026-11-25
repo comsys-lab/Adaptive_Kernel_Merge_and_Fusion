@@ -1,7 +1,20 @@
+/*
+ * kernels.cu - basic CUDA kernels for one inference (batch size 1).
+ *
+ * Shared by all policies. Data layout:
+ *   feature maps : [channel][row][col]
+ *   conv weights : [out_channel][in_channel][k_row][k_col]  (PyTorch layout)
+ *   fc weights   : [out][in]
+ * The first-layer kernel reads the input image in HWC order (224x224x3).
+ * Each thread computes one output element; blockIdx.x selects the output
+ * channel, and blockIdx.y/z with threadIdx.x/y select the row/column.
+ */
+
 #include <stdio.h>
 #include <math.h>
 
-__global__ void first_jjb(float *bias,float *in_nu,float *in_w,float *out_nu,
+/* Convolution in first layer */
+__global__ void first(float *bias,float *in_nu,float *in_w,float *out_nu,
 int in_fm,int out_fm,int str,int pad,int ker,int ker_channel,bool b,bool relu)
 {
 	int num_out = blockIdx.x;
@@ -50,7 +63,7 @@ int in_fm,int out_fm,int str,int pad,int ker,int ker_channel,bool b,bool relu)
 	for(int i = 0; i < loopr; i++){
 		for(int j = 0; j < loopc; j++){
 			for(int k = 0; k < ker_channel; k++){
-				product += in_nu[i*in_fm*ker_channel + j*ker_channel + k +  x_str + y_str] 
+				product += in_nu[i*in_fm*ker_channel + j*ker_channel + k + x_str + y_str] 
 						*in_w[num_out*ker*ker*ker_channel + i*ker + j + k*ker*ker + x_pad*ker + y_pad];
 			}
 		}
@@ -68,7 +81,8 @@ int in_fm,int out_fm,int str,int pad,int ker,int ker_channel,bool b,bool relu)
 	}
 }
 
-__global__ void conv_jjb(float *bias,float *in_nu,float *in_w,float *out_nu,
+/* Convolution */
+__global__ void conv(float *bias,float *in_nu,float *in_w,float *out_nu,
 int in_fm,int out_fm,int str,int pad,int ker,int ker_channel,bool b,bool relu)
 {
 	int num_out = blockIdx.x;
@@ -134,7 +148,39 @@ int in_fm,int out_fm,int str,int pad,int ker,int ker_channel,bool b,bool relu)
 	}
 }
 
-__global__ void max_jjb(float *in_nu,float *out_nu,
+/* Local Response Normalization */
+__global__ void norm(float *in_nu,float *out_nu,
+float alpha,float beta,int local_size,int out_fm)
+{
+	int num_out = blockIdx.x;
+	int row_out_block = blockIdx.y;
+	int col_out_block = blockIdx.z;
+	int row_out_thread = threadIdx.x;
+	int col_out_thread = threadIdx.y;
+
+    int row = ((blockDim.x*row_out_block)+(row_out_thread));
+    int col = ((blockDim.y*col_out_block)+(col_out_thread));  
+
+	int out_position = (out_fm*out_fm*num_out) + (out_fm*row) + col;
+
+    int input_position = (out_fm*row) + col;
+
+    int nStart = 0, nEnd = 0;
+    nStart=(num_out-2) > 1 ? (num_out-2) : 1 ;
+    nEnd=(num_out+2) < gridDim.x ? (num_out+2) : gridDim.x ;
+
+    float sum = 0.0;
+    float result = 0.0;  
+    for(int i = (nStart-1); i < (nEnd-1); i++){
+        sum += pow((in_nu[i*out_fm*out_fm + input_position]),2);
+    }
+    result = (in_nu[out_position]) / (pow( 1 + ((alpha/local_size) * sum),beta));
+    sum = 0.0;
+    out_nu[out_position] = result;
+}
+
+/* Maxpooling */
+__global__ void max(float *in_nu,float *out_nu,
 int in_fm,int out_fm,int str,int pad,int ker)
 {
     int num_out = blockIdx.x;
@@ -186,7 +232,8 @@ int in_fm,int out_fm,int str,int pad,int ker)
     out_nu[out_position] = max;
 }
 
-__global__ void batchnorm_jjb(float *in_nu,float *out_nu,float *mean,float *var,
+/* Batch Normalization */
+__global__ void batchnorm(float *in_nu,float *out_nu,float *mean,float *var,
 float *gamma,float *beta,int out_fm,bool relu)
 {
     int num_out = blockIdx.x;
@@ -212,6 +259,7 @@ float *gamma,float *beta,int out_fm,bool relu)
 	out_nu[out_position] = product;
 }
 
+/* Basic Block(in resnet) */
 __global__ void basic_block(float *in_nu1,float *in_nu2,float *out_nu,
 int out_fm,bool relu)
 {
@@ -238,7 +286,7 @@ int out_fm,bool relu)
 	out_nu[out_position] = product;
 }
 
-__global__ void globalavg_jjb(float *in_nu, float *out_nu,int in_fm)
+__global__ void globalavg(float *in_nu, float *out_nu,int in_fm)
 {
 	int num_out = blockIdx.x;
 
@@ -251,7 +299,8 @@ __global__ void globalavg_jjb(float *in_nu, float *out_nu,int in_fm)
 	out_nu[num_out] = sum/(in_fm*in_fm);
 }
 
-__global__ void fc_jjb(float *bias,float *in_nu,float *in_w,float *out_nu,
+/* Fully Connected */
+__global__ void fc(float *bias,float *in_nu,float *in_w,float *out_nu,
 int input, bool relu)
 {
     int num_out = blockIdx.x;
@@ -265,8 +314,8 @@ int input, bool relu)
 
 	//ReLU
     if(relu == true){
-       	if(result < 0)
-			result = 0;
+        if(result < 0)
+            result = 0;
     }
 
 	out_nu[num_out] = result;

@@ -1,7 +1,23 @@
+/*
+ * fused_kernels.cu - kernels for kernel merging and kernel fusion.
+ *
+ * Merged kernels (*_merged): one kernel launch processes `model_num` requests
+ *   of the same model. Each thread loops over the requests, so N requests need
+ *   one launch instead of N.
+ *
+ * Fused kernels (fused_*): one kernel launch computes a layer of merged AlexNet
+ *   requests and a layer of merged ResNet18 requests together. The grid covers
+ *   both layers; the block/thread index decides which model a thread works on
+ *   (model1_* = AlexNet bounds, model2_* = ResNet18 bounds).
+ *
+ * Layouts are the same as in kernels.cu.
+ */
+
 #include <stdio.h>
 #include <math.h>
 #include <time.h>
 
+/* Fused: AlexNet conv1 (11x11) + ResNet18 conv1 (7x7), both read the input image. */
 __global__ void fused_first_layer(float *a_bias,float *a_in_w,float *r_in_w,
 float *a_in_nu,float *r_in_nu,
 float *a_out_nu,float *r_out_nu,
@@ -140,6 +156,7 @@ int model2_bidyz,int model2_tidxy)
 	}
 }
 
+/* Fused: AlexNet local response normalization + ResNet18 batch normalization. */
 __global__ void fused_lrm_bn1(float *a_in_nu,float *r_in_nu,
 float *a_out_nu,float *r_out_nu,
 int alex_num,int res_num,
@@ -200,6 +217,7 @@ int model2_bidx,int model2_bidyz,int model2_tidxy)
 	}
 }
 
+/* Fused: AlexNet max pooling + ResNet18 max pooling. */
 __global__ void fused_max1(float *in_nu1,float *in_nu2,
 float *out_nu1,float *out_nu2,
 int model_num1,int model_num2,
@@ -308,6 +326,7 @@ int model2_bidx,int model2_bidyz,int model2_tidxy)
 	}
 }
 
+/* Fused: one AlexNet conv layer + one ResNet18 conv layer. */
 __global__ void fused_two_conv(float *a_bias,float *a_in_w,float *r_in_w,
 float *a_in_nu,float *r_in_nu,
 float *a_out_nu,float *r_out_nu,
@@ -446,6 +465,7 @@ int model2_bidx,int model2_bidyz,int model2_tidxy)
 	}
 }
 
+/* Fused: AlexNet max pooling + ResNet18 batch normalization. */
 __global__ void fused_bn_max1(float *in_nu1,float *in_nu2,
 float *out_nu1,float *out_nu2,
 int model_num1,int model_num2,
@@ -533,6 +553,7 @@ int model2_bidx,int model2_bidyz,int model2_tidxy)
 	}
 }
 
+/* Fused: AlexNet fully connected layer + ResNet18 fully connected layer. */
 __global__ void fused_two_fc1(float *a_bias,float *r_bias,float *a_in_w,float *r_in_w,
 float *a_in_nu,float *r_in_nu,
 float *a_out_nu,float *r_out_nu,
@@ -578,9 +599,11 @@ int r_input, bool r_relu)
 	}
 }
 
-//////////////////////////Single kernel//////////////////////////////////
+/////////////////////////////// Merged kernels ///////////////////////////////
+// Same computation as kernels.cu, repeated for `model_num` requests of one model.
 
-__global__ void first_jjb(float *bias,float *in_nu,float *in_w,float *out_nu,int model_num,
+/* First convolution (reads the HWC input image). */
+__global__ void first_merged(float *bias,float *in_nu,float *in_w,float *out_nu,int model_num,
 int in_fm,int out_fm,int str,int pad,int ker,int ker_channel,bool b,bool relu)
 {
 	int num_out = blockIdx.x;
@@ -649,8 +672,9 @@ int in_fm,int out_fm,int str,int pad,int ker,int ker_channel,bool b,bool relu)
 	}
 }
 
-/* Convolution */
-__global__ void conv_jjb1(float *bias,float *in_nu,float *in_w,float *out_nu,int model_num,
+/* Convolution for output channels 64 and above. Used after fused_two_conv, which
+   computes only the first 64 output channels of an AlexNet layer. */
+__global__ void conv_merged_from64(float *bias,float *in_nu,float *in_w,float *out_nu,int model_num,
 int in_fm,int out_fm,int str,int pad,int ker,int ker_channel,bool b,bool relu)
 {
 	int num_out = blockIdx.x + 64;
@@ -718,7 +742,7 @@ int in_fm,int out_fm,int str,int pad,int ker,int ker_channel,bool b,bool relu)
 	}
 }
 
-__global__ void conv_jjb(float *bias,float *in_nu,float *in_w,float *out_nu,int model_num,
+__global__ void conv_merged(float *bias,float *in_nu,float *in_w,float *out_nu,int model_num,
 int in_fm,int out_fm,int str,int pad,int ker,int ker_channel,bool b,bool relu)
 {
 	int num_out = blockIdx.x;
@@ -787,7 +811,7 @@ int in_fm,int out_fm,int str,int pad,int ker,int ker_channel,bool b,bool relu)
 }
 
 /* Local Response Normalization */
-__global__ void norm_jjb(float *in_nu,float *out_nu,int model_num,
+__global__ void norm_merged(float *in_nu,float *out_nu,int model_num,
 float alpha,float beta,int local_size,int out_fm)
 {
 	int num_out = blockIdx.x;
@@ -820,7 +844,7 @@ float alpha,float beta,int local_size,int out_fm)
 }
 
 /* Maxpooling */
-__global__ void max_jjb(float *in_nu,float *out_nu,int model_num,
+__global__ void max_merged(float *in_nu,float *out_nu,int model_num,
 int in_fm,int out_fm,int str,int pad,int ker)
 {
     int num_out = blockIdx.x;
@@ -874,7 +898,7 @@ int in_fm,int out_fm,int str,int pad,int ker)
 }
 
 /* Batch Normalization */
-__global__ void batchnorm_jjb(float *in_nu,float *out_nu,int model_num,
+__global__ void batchnorm_merged(float *in_nu,float *out_nu,int model_num,
 float *mean,float *var,float *gamma,float *beta,int out_fm,bool relu)
 {
     int num_out = blockIdx.x;
@@ -901,7 +925,7 @@ float *mean,float *var,float *gamma,float *beta,int out_fm,bool relu)
 }
 
 /* Basic Block(in resnet) */
-__global__ void basic_block_jjb(float *in_nu1,float *in_nu2,float *out_nu,int model_num,
+__global__ void basic_block_merged(float *in_nu1,float *in_nu2,float *out_nu,int model_num,
 int out_fm,bool relu)
 {
 	int num_out = blockIdx.x;
@@ -928,7 +952,8 @@ int out_fm,bool relu)
 	}
 }
 
-__global__ void globalavg_jjb(float *in_nu, float *out_nu,int model_num,int in_fm)
+/* Global average pooling (ResNet18). */
+__global__ void globalavg_merged(float *in_nu, float *out_nu,int model_num,int in_fm)
 {
 	int num_out = blockIdx.x;
 
@@ -944,7 +969,7 @@ __global__ void globalavg_jjb(float *in_nu, float *out_nu,int model_num,int in_f
 }
 
 /* Fully Connected */
-__global__ void fc_jjb(float *bias,float *in_nu,float *in_w,float *out_nu,int model_num,
+__global__ void fc_merged(float *bias,float *in_nu,float *in_w,float *out_nu,int model_num,
 int input, bool relu)
 {
     int num_out = blockIdx.x;

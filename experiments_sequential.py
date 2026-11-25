@@ -1,9 +1,20 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
+"""Sequential execution (baseline).
 
-# Before run this code, 
-# Execute '/usr/local/cuda/bin/nvcc -Xcompiler -fPIC -shared -o priorwork_models.so priorwork_models.cu' first.
-from concurrent.futures import process
-from urllib.parse import uses_query
+One process takes requests from the queue in arrival order and runs each
+inference to completion before starting the next one. No two inferences
+share the GPU.
+
+Usage (from the repository root):
+    nvcc -Xcompiler -fPIC -shared -o aras_models.so src/aras_models.cu
+    ./experiments_sequential.py <num_requests> <arrival_rate>
+
+<arrival_rate> is 95, 90, 85 or 80: requests arrive as a Poisson process whose
+rate is that percentage of the service rate (1 / avg_inference_time).
+The model of each request is read from random_model.txt.
+Each processed request appends `<model> <queuing_delay> <inference_time>` to
+results/sequential.txt.
+"""
 import time, os
 import sys
 from math import factorial, exp
@@ -15,11 +26,12 @@ from numpy import random
 import ctypes
 from ctypes import *
 
+# Runs every request to completion, one at a time, in arrival order.
 def sequential_inference(count, user_request, random_model, total, stopping, producer_status, finisher):
     pid = os.getpid()
     print('Inference PID : {0}'.format(pid))
 
-    dll = ctypes.CDLL('./priorwork_models.so', mode=ctypes.RTLD_GLOBAL)
+    dll = ctypes.CDLL('./aras_models.so', mode=ctypes.RTLD_GLOBAL)
     host2gpu_alexnet = dll.host2gpu_alexnet
     host2gpu_alexnet.argtypes = [POINTER(POINTER(c_float)),POINTER(POINTER(c_float)),POINTER(POINTER(c_float)),POINTER(POINTER(c_float)),
                                         POINTER(POINTER(c_float)),POINTER(POINTER(c_float)),POINTER(POINTER(c_float)),POINTER(POINTER(c_float)),
@@ -756,6 +768,7 @@ def sequential_inference(count, user_request, random_model, total, stopping, pro
         vgg_second_fc(V_L15_b,V_L15_N,V_L15_w,V_L16_N)
         vgg_third_fc(V_L16_b,V_L16_N,V_L16_w,V_Result_N)
 
+    # Signal that this process is ready; all processes start together.
     stopping.value = stopping.value + 1
 
     print("Inference Start!")
@@ -772,13 +785,13 @@ def sequential_inference(count, user_request, random_model, total, stopping, pro
 
     while True:
         if(user_request.empty()):
-            if(producer_status.value == 0):        #user_request는 비어있지만 request creator는 아직 작동중
+            if(producer_status.value == 0):        # queue is empty but the request generator is still running
                 continue
-            elif (producer_status.value == 1):      #user_request는 비어있고 request creator 작동 끝 --> break
+            elif (producer_status.value == 1):      # queue is empty and the request generator has finished
                 break
         else:
-            file = open("result_sequential.txt","a")
-            request_count = count.qsize()       #처리된 request가 X개를 넘으면 inference 종료
+            file = open("results/sequential.txt","a")
+            request_count = count.qsize()       # stop once the target number of requests is processed
             if request_count > (total - 1):
                 file.close()
                 finisher.value = 1 
@@ -989,6 +1002,8 @@ def sequential_inference(count, user_request, random_model, total, stopping, pro
                 V_L2_pool,V_L4_pool,V_L7_pool,V_L10_pool,
                 V_L13_pool,V_Result_N)
 
+# Request generator: puts the arrival time of each request into the queue,
+# with Poisson-distributed intervals. Requests are dropped when the queue is full.
 def request_arrival(user_request, queue_size, arrival_time, stopping, producer_status, finisher):
     pid = os.getpid()
     print('request producer PID: ',pid)
@@ -1020,7 +1035,7 @@ def request_arrival(user_request, queue_size, arrival_time, stopping, producer_s
         if(user_request.qsize() <= queue_size and finisher.value != 1):                            
             user_request.put(requested_time)
         elif(finisher.value == 1):
-            break                                           # inference 1000개 끝나면 request creater도 종료
+            break                                           # all requests processed: stop generating
         else:
             not_processed += 1
             continue 
@@ -1029,20 +1044,21 @@ def request_arrival(user_request, queue_size, arrival_time, stopping, producer_s
     print(pid, ": request producer finish")
     print('{0} requests not added to request queue'.format(not_processed))
 
+USAGE = "usage: {} <num_requests> <arrival_rate: 95|90|85|80>".format(sys.argv[0])
+
 def get_total_requests():
-    total = int(input('Input total requests to be processed: '))
-    return total
+    # Number of requests to process
+    if len(sys.argv) != 3:
+        sys.exit(USAGE)
+    return int(sys.argv[1])
 
 def get_arrival_time(avg_inference_time):
-    a = int(input('Input arrival rate: 1.service_rate*0.95, 2.service_rate*0.90, 3.service_rate*0.85, 4.service_rate*0.80 : '))
-    if(a == 1):
-        return avg_inference_time*(100/95)
-    if(a == 2):
-        return avg_inference_time*(100/90)
-    if(a == 3):
-        return avg_inference_time*(100/85)
-    if(a == 4):
-        return avg_inference_time*(100/80)
+    # Mean arrival interval so that the arrival rate is N% of the service rate
+    rate = int(sys.argv[2])
+    if rate not in (95, 90, 85, 80):
+        sys.exit(USAGE)
+    return avg_inference_time*(100/rate)
+
 
 ###################################################################################
 
@@ -1057,11 +1073,13 @@ if __name__ == '__main__':
 
     manager = multiprocessing.Manager()
     random_model = manager.list()
-    with open("queue_model.txt") as f:
+    with open("random_model.txt") as f:
         for line in f:
             random_model.append(line.strip()) 
 
-    # Each Inference Time (with multi-tenancy & interval != 0)
+    # Average inference time (s) of AlexNet, ResNet18 and VGG16 measured on Jetson
+    # while running concurrently with request intervals. It sets the service rate,
+    # and the same value is used by every policy so that all see the same arrivals.
     avg_inference_time = 0.076218889
 
     total = get_total_requests()

@@ -1,0 +1,11 @@
+# Pretrained weights as text (~2.9GB in total) - create with ./export_weights.py
+data_alexnet/
+data_resnet18/
+data_vgg16/
+
+# Build output
+*.so
+
+# Runtime output
+results/
+__pycache__/

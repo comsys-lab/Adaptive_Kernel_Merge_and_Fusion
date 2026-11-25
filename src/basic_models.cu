@@ -1,3 +1,13 @@
+/*
+ * basic_models.cu - AlexNet, ResNet18 and VGG16 inference with the basic
+ * kernels (kernels.cu), one request per call.
+ *
+ * Built as basic_models.so and used by experiments_concurrent.py.
+ * For each model: host2gpu_<model>() loads the weights from data_<model>/ and
+ * copies them to the GPU, inference_<model>() runs one inference, and
+ * free_<model>() releases the GPU memory.
+ */
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -5,7 +15,7 @@
 #include <math.h>
 #include <time.h>
 
-#include "Kernel.cu"
+#include "kernels.cu"
 
 #define INPUT_SIZE 224*224*3
 
@@ -210,124 +220,87 @@ void host2gpu_alexnet(float **Alex_Layer1_Neurons,float **Alex_Layer2_Neurons,fl
 	*Alex_Result_Neurons = Alex_Result_Neurons_data;
 }
 
-// float start_time()
-// {
-// 	cudaEvent_t start;
-// 	cudaEventCreate(&start);
-// 	cudaEventRecord(start,0);
-
-// 	float host_start;
-//     cudaMemcpy(&host_start, &start, sizeof(float), cudaMemcpyDeviceToHost);
-//	return host_start;
-// 	cudaEventDestroy(start);
-// }
-
-// float end_time()
-// {
-// 	cudaEvent_t end;
-// 	cudaEventCreate(&end);
-// 	cudaEventRecord(end,0);
-
-// 	float host_end;
-//    cudaMemcpy(&host_end, &end, sizeof(float), cudaMemcpyDeviceToHost);
-// 	return host_end;
-// 	cudaEventDestroy(end);
-// }
-
-void alex_first_conv(float *Alex_Layer1_bias,float *Alex_Layer1_Neurons,float *Alex_Layer1_Weights,float *Alex_Layer1_norm)
+void inference_alexnet(float *Alex_Layer1_Neurons,float *Alex_Layer2_Neurons,float *Alex_Layer3_Neurons,float *Alex_Layer4_Neurons,
+					float *Alex_Layer5_Neurons,float *Alex_Layer6_Neurons,float *Alex_Layer7_Neurons,float *Alex_Layer8_Neurons,
+                    float *Alex_Layer1_bias,float *Alex_Layer2_bias,float *Alex_Layer3_bias,float *Alex_Layer4_bias,
+                    float *Alex_Layer5_bias,float *Alex_Layer6_bias,float *Alex_Layer7_bias,float *Alex_Layer8_bias,
+                    float *Alex_Layer1_Weights,float *Alex_Layer2_Weights,float *Alex_Layer3_Weights,float *Alex_Layer4_Weights,
+                    float *Alex_Layer5_Weights,float * Alex_Layer6_Weights,float *Alex_Layer7_Weights,float *Alex_Layer8_Weights,
+                    float *Alex_Layer1_pool,float *Alex_Layer2_pool,float *Alex_Layer5_pool,
+					float *Alex_Layer1_norm,float *Alex_Layer2_norm,float *Alex_Result_Neurons)
 {
-    dim3 Layer1_Block(64,5,5);
+	dim3 Layer1_Block(64,5,5);
 	dim3 Layer1_Thread(11,11);
 	first<<<Layer1_Block,Layer1_Thread>>>(Alex_Layer1_bias,Alex_Layer1_Neurons,Alex_Layer1_Weights,Alex_Layer1_norm,224,55,4,2,11,3,true,true);
-}
 
-void alex_fisrt_norm(float *Alex_Layer1_norm,float *Alex_Layer1_pool)
-{
-   	dim3 Norm11_Block(64,5,5);
+	/* Normalization of First Layer */
+	dim3 Norm11_Block(64,5,5);
 	dim3 Norm11_Thread(11,11);
-	norm<<<Norm11_Block,Norm11_Thread>>>(Alex_Layer1_norm,Alex_Layer1_pool,0.0001,0.75,5,55); 
-}
+	norm<<<Norm11_Block,Norm11_Thread>>>(Alex_Layer1_norm,Alex_Layer1_pool,0.0001,0.75,5,55);
 
-void alex_first_pool(float *Alex_Layer1_pool,float *Alex_Layer2_Neurons)
-{
-    dim3 Pool1_Block(64,1,1);
+	/* Maxpooling of First Layer */
+	dim3 Pool1_Block(64,1,1);
 	dim3 Pool1_Thread(27,27);
 	max<<<Pool1_Block,Pool1_Thread>>>(Alex_Layer1_pool,Alex_Layer2_Neurons,55,27,2,0,3);
-}
 
-void alex_second_conv(float *Alex_Layer2_bias,float *Alex_Layer2_Neurons,float *Alex_Layer2_Weights,float *Alex_Layer2_norm)
-{
-    dim3 Layer2_Block(192,1,1);
+	//* Second Layer *//
+	/* Convolution of Second Layer */
+	dim3 Layer2_Block(192,1,1);
 	dim3 Layer2_Thread(27,27); 
 	conv<<<Layer2_Block,Layer2_Thread>>>(Alex_Layer2_bias,Alex_Layer2_Neurons,Alex_Layer2_Weights,Alex_Layer2_norm,27,27,1,2,5,64,true,true);
-}
-
-void alex_second_norm(float *Alex_Layer2_norm,float *Alex_Layer2_pool)
-{
-    dim3 Norm2_Block(192,1,1);
+	
+	/* Normalization of Second Layer */
+	dim3 Norm2_Block(192,1,1);
 	dim3 Norm2_Thread(27,27);
 	norm<<<Norm2_Block,Norm2_Thread>>>(Alex_Layer2_norm,Alex_Layer2_pool,0.0001,0.75,5,27);
-}
-
-void alex_second_pool(float *Alex_Layer2_pool,float *Alex_Layer3_Neurons)
-{
-    dim3 Pool2_Block(192,1,1);
+	
+	/* Maxpooling of Second Layer */
+	dim3 Pool2_Block(192,1,1);
 	dim3 Pool2_Thread(13,13);
 	max<<<Pool2_Block,Pool2_Thread>>>(Alex_Layer2_pool,Alex_Layer3_Neurons,27,13,2,0,3);
-}
 
-void alex_third_conv(float *Alex_Layer3_bias,float *Alex_Layer3_Neurons,float *Alex_Layer3_Weights,float *Alex_Layer4_Neurons)
-{
+	//* Third Layer *//
+	/* Convolution of Third Layer */
 	dim3 Layer3_Block(384,1,1);
 	dim3 Layer3_Thread(13,13); 
-	conv<<<Layer3_Block,Layer3_Thread>>>(Alex_Layer3_bias,Alex_Layer3_Neurons,Alex_Layer3_Weights,Alex_Layer4_Neurons,13,13,1,1,3,192,true,true);
-}
+	conv<<<Layer3_Block,Layer3_Thread>>>(Alex_Layer3_bias, Alex_Layer3_Neurons, Alex_Layer3_Weights, Alex_Layer4_Neurons,13,13,1,1,3,192,true,true);
 
-void alex_fourth_conv(float *Alex_Layer4_bias,float *Alex_Layer4_Neurons,float *Alex_Layer4_Weights,float *Alex_Layer5_Neurons)
-{
-    dim3 Layer4_Block(256,1,1);
+	//* Fourth Layer *//
+	/* Convolution of Fourth Layer */
+	dim3 Layer4_Block(256,1,1);
 	dim3 Layer4_Thread(13,13); 
-	conv<<<Layer4_Block,Layer4_Thread>>>(Alex_Layer4_bias,Alex_Layer4_Neurons,Alex_Layer4_Weights,Alex_Layer5_Neurons,13,13,1,1,3,384,true,true);
-}
+	conv<<<Layer4_Block,Layer4_Thread>>>(Alex_Layer4_bias, Alex_Layer4_Neurons, Alex_Layer4_Weights, Alex_Layer5_Neurons,13,13,1,1,3,384,true,true);
 
-void alex_fifth_conv(float *Alex_Layer5_bias,float *Alex_Layer5_Neurons,float *Alex_Layer5_Weights,float *Alex_Layer5_pool)
-{
-    dim3 Layer5_Block(256,1,1);
+	//* Fifth Layer *//
+	/* Convolution of Fifth Layer */
+	dim3 Layer5_Block(256,1,1);
 	dim3 Layer5_Thread(13,13); 
-	conv<<<Layer5_Block,Layer5_Thread>>>(Alex_Layer5_bias,Alex_Layer5_Neurons,Alex_Layer5_Weights,Alex_Layer5_pool,13,13,1,1,3,256,true,true);
-}
+	conv<<<Layer5_Block,Layer5_Thread>>>(Alex_Layer5_bias, Alex_Layer5_Neurons, Alex_Layer5_Weights, Alex_Layer5_pool,13,13,1,1,3,256,true,true);
 
-void alex_fifth_pool(float *Alex_Layer5_pool,float *Alex_Layer6_Neurons)
-{
+	/* Maxpooling of Fifth Layer */
 	dim3 Pool3_Block(256,1,1);
 	dim3 Pool3_Thread(6,6);
-	max<<<Pool3_Block,Pool3_Thread>>>(Alex_Layer5_pool,Alex_Layer6_Neurons,13,6,2,0,3);
-}
+	max<<<Pool3_Block,Pool3_Thread>>>(Alex_Layer5_pool, Alex_Layer6_Neurons,13,6,2,0,3);
 
-void alex_first_fc(float *Alex_Layer6_bias,float *Alex_Layer6_Neurons,float *Alex_Layer6_Weights,float *Alex_Layer7_Neurons)
-{	
+	//* Sixth Layer *//
+	/* First Fully Connected Layer */
 	dim3 Layer6_Block(4096,1,1);
 	dim3 Layer6_Thread(1,1);
-	fc<<<Layer6_Block,Layer6_Thread>>>(Alex_Layer6_bias,Alex_Layer6_Neurons,Alex_Layer6_Weights,Alex_Layer7_Neurons,(6*6*256),true);
+	fc<<<Layer6_Block,Layer6_Thread>>>(Alex_Layer6_bias, Alex_Layer6_Neurons, Alex_Layer6_Weights, Alex_Layer7_Neurons, (6*6*256), true);
 
-}
-
-void alex_second_fc(float *Alex_Layer7_bias,float *Alex_Layer7_Neurons,float *Alex_Layer7_Weights,float *Alex_Layer8_Neurons)
-{
+	//* Seventh Layer *//
+	/* Second Fully Connected Layer */
 	dim3 Layer7_Block(4096,1,1);
 	dim3 Layer7_Thread(1,1);
-	fc<<<Layer7_Block,Layer7_Thread>>>(Alex_Layer7_bias,Alex_Layer7_Neurons,Alex_Layer7_Weights,Alex_Layer8_Neurons,4096,true);
-}
+	fc<<<Layer7_Block,Layer7_Thread>>>(Alex_Layer7_bias, Alex_Layer7_Neurons, Alex_Layer7_Weights, Alex_Layer8_Neurons, 4096, true);
 
-void alex_third_fc(float *Alex_Layer8_bias,float *Alex_Layer8_Neurons,float *Alex_Layer8_Weights,float *Alex_Result_Neurons)
-{
-
-
-    dim3 Layer8_Block(1000,1,1);
+	//* Eighth Layer *//
+	/* Third Fully Connected Layer */
+	dim3 Layer8_Block(1000,1,1);
 	dim3 Layer8_Thread(1,1);
-	fc<<<Layer8_Block,Layer8_Thread>>>(Alex_Layer8_bias,Alex_Layer8_Neurons,Alex_Layer8_Weights,Alex_Result_Neurons,4096,false);
+	fc<<<Layer8_Block,Layer8_Thread>>>(Alex_Layer8_bias, Alex_Layer8_Neurons, Alex_Layer8_Weights, Alex_Result_Neurons, 4096, false);
 
-    float *Alex_Result_Neurons_CPU = (float *) malloc ((1000) * sizeof(float));
+	float *Alex_Result_Neurons_CPU = (float *) malloc ((1000) * sizeof(float));
 	cudaMemcpy(Alex_Result_Neurons_CPU, Alex_Result_Neurons, (1000) * sizeof(float), cudaMemcpyDeviceToHost);
 
 	float max1 = 0.0;
@@ -1290,245 +1263,176 @@ void host2gpu_resnet18(float **Res_Layer1_Neurons,float **Res_Layer2_Neurons,flo
     float *Res_Result_Neurons_data;
     cudaMalloc((void**) &Res_Result_Neurons_data, 1000 * sizeof(float)); //1000
 	*Res_Result_Neurons = Res_Result_Neurons_data;
-}
+}	
 
-void res_first_conv(float *Res_Layer1_Neurons,float *Res_Layer1_Weights,float *Res_Layer1_bn,float *Res_Layer1_pool,float *Res_mean1,float *Res_var1,float *Res_Layer1_Gamma,float *Res_Layer1_Beta)
+void inference_resnet18(float *Res_Layer1_Neurons,float *Res_Layer2_Neurons,float *Res_Layer3_Neurons,float *Res_Layer4_Neurons,
+					float *Res_Layer5_Neurons,float *Res_Layer6_Neurons,float *Res_Layer7_Neurons,float *Res_Layer8_Neurons,
+					float *Res_Layer9_Neurons,float *Res_Layer10_Neurons,float *Res_Layer11_Neurons,float *Res_Layer12_Neurons,
+					float *Res_Layer13_Neurons,float *Res_Layer14_Neurons,float *Res_Layer15_Neurons,float *Res_Layer16_Neurons,
+					float *Res_Layer17_Neurons,float *Res_Layer18_Neurons,
+                    float *Res_Layer1_Weights,float *Res_Layer2_Weights,float *Res_Layer3_Weights,float *Res_Layer4_Weights,
+                    float *Res_Layer5_Weights,float *Res_Layer6_Weights,float *Res_Layer7_Weights,float *Res_Layer8_Weights,
+                    float *Res_Layer9_Weights,float *Res_Layer10_Weights,float *Res_Layer11_Weights,float *Res_Layer12_Weights,
+                    float *Res_Layer13_Weights,float *Res_Layer14_Weights,float *Res_Layer15_Weights,float *Res_Layer16_Weights,
+                    float *Res_Layer17_Weights,float *Res_Block3_Weights,float *Res_Block4_Weights,float *Res_Block5_Weights,
+                    float *Res_Layer1_Gamma,float *Res_Layer2_Gamma,float *Res_Layer3_Gamma,float *Res_Layer4_Gamma,
+                    float *Res_Layer5_Gamma,float *Res_Layer6_Gamma,float *Res_Layer7_Gamma,float *Res_Layer8_Gamma,
+                    float *Res_Layer9_Gamma,float *Res_Layer10_Gamma,float *Res_Layer11_Gamma,float *Res_Layer12_Gamma,
+                    float *Res_Layer13_Gamma,float *Res_Layer14_Gamma,float *Res_Layer15_Gamma,float *Res_Layer16_Gamma,
+                    float *Res_Layer17_Gamma,float *Res_Block3_Gamma,float *Res_Block4_Gamma,float *Res_Block5_Gamma,
+                    float *Res_Layer1_Beta,float *Res_Layer2_Beta,float *Res_Layer3_Beta,float *Res_Layer4_Beta,
+                    float *Res_Layer5_Beta,float *Res_Layer6_Beta,float *Res_Layer7_Beta,float *Res_Layer8_Beta,
+                    float *Res_Layer9_Beta,float *Res_Layer10_Beta,float *Res_Layer11_Beta,float *Res_Layer12_Beta,
+                    float *Res_Layer13_Beta,float *Res_Layer14_Beta,float *Res_Layer15_Beta,float *Res_Layer16_Beta,
+                    float *Res_Layer17_Beta,float *Res_Block3_Beta,float *Res_Block4_Beta,float *Res_Block5_Beta,
+                    float *Res_mean1,float *Res_mean2,float *Res_mean3,float *Res_mean4,float *Res_mean5,
+                    float *Res_mean6,float *Res_mean7,float *Res_mean8,float *Res_mean9,float *Res_mean10,
+                    float *Res_mean11,float *Res_mean12,float *Res_mean13,float *Res_mean14,float *Res_mean15,
+                    float *Res_mean16,float *Res_mean17,float *Res_Block3_mean,float *Res_Block4_mean,float *Res_Block5_mean,
+                    float *Res_var1,float *Res_var2,float *Res_var3,float *Res_var4,float *Res_var5,
+                    float *Res_var6,float *Res_var7,float *Res_var8,float *Res_var9,float *Res_var10,
+                    float *Res_var11,float *Res_var12,float *Res_var13,float *Res_var14,float *Res_var15,
+                    float *Res_var16,float *Res_var17,float *Res_Block3_var,float *Res_Block4_var,float *Res_Block5_var,
+                    float *Res_FC_bias,float *Res_FC_Weights,
+					float *Res_Layer3_basic,float *Res_Layer5_basic,float *Res_Layer7_basic,float *Res_Layer9_basic,
+					float *Res_Layer11_basic,float *Res_Layer13_basic,float *Res_Layer15_basic,float *Res_Layer17_basic,
+					float *Res_Block3_basic,float *Res_Block4_basic,float *Res_Block5_basic,
+					float *Res_Layer1_bn,float *Res_Layer2_bn,float *Res_Layer3_bn,float *Res_Layer4_bn,
+					float *Res_Layer5_bn,float *Res_Layer6_bn,float *Res_Layer7_bn,float *Res_Layer8_bn,
+					float *Res_Layer9_bn,float *Res_Layer10_bn,float *Res_Layer11_bn,float *Res_Layer12_bn,
+					float *Res_Layer13_bn,float *Res_Layer14_bn,float *Res_Layer15_bn,float *Res_Layer16_bn,
+					float *Res_Layer17_bn,float *Res_Block3_bn,float *Res_Block4_bn,float *Res_Block5_bn,
+					float *Res_Layer1_pool,float *Res_FC_Neurons,float *Res_Result_Neurons)									
 {
-    dim3 Block1_Block(64,16,16);
-    dim3 Block_Thread(7,7);
+	//* Block A (1 layer)*//
+	dim3 Block_Thread(7,7);
+	dim3 Single_Thread(1,1);
+
+	dim3 Block1_Block(64,16,16);
+
+	//1st layer
 	first<<<Block1_Block,Block_Thread>>>(NULL,Res_Layer1_Neurons,Res_Layer1_Weights,Res_Layer1_bn,224,112,2,3,7,3,false,true);
 	batchnorm<<<Block1_Block,Block_Thread>>>(Res_Layer1_bn,Res_Layer1_pool,Res_mean1,Res_var1,Res_Layer1_Gamma,Res_Layer1_Beta,112,true);
-}
 
-void res_first_pool(float *Res_Layer1_pool,float *Res_Layer2_Neurons)
-{
-    dim3 Block1_Pool_Block(64,8,8);
-    dim3 Block_Thread(7,7);
-	max<<<Block1_Pool_Block,Block_Thread>>>(Res_Layer1_pool,Res_Layer2_Neurons,112,56,2,1,3);
-}
+	dim3 Block1_Pool_Block(64,8,8);
+	max<<<Block1_Pool_Block,Block_Thread>>>(Res_Layer1_pool,Res_Layer2_Neurons,112,56,2,1,3);	
 
-void res_second_conv(float *Res_Layer2_Neurons,float *Res_Layer2_Weights,float *Res_Layer2_bn,float *Res_Layer3_Neurons,float *Res_mean2,float *Res_var2,float *Res_Layer2_Gamma,float *Res_Layer2_Beta)
-{
-    dim3 Block2_Block(64,8,8);
-    dim3 Block_Thread(7,7);
+	//* Block B (2,3,4,5 layer) *//
+	/* 2 Identiity Block */ 
+	dim3 Block2_Block(64,8,8);
+
+	// 2nd layer
 	conv<<<Block2_Block,Block_Thread>>>(NULL,Res_Layer2_Neurons,Res_Layer2_Weights,Res_Layer2_bn,56,56,1,1,3,64,false,false);
 	batchnorm<<<Block2_Block,Block_Thread>>>(Res_Layer2_bn,Res_Layer3_Neurons,Res_mean2,Res_var2,Res_Layer2_Gamma,Res_Layer2_Beta,56,true);
-}
 
-void res_third_conv(float *Res_Layer3_Neurons,float *Res_Layer3_Weights,float *Res_Layer3_bn,float *Res_Layer3_basic,float *Res_mean3,float *Res_var3,float *Res_Layer3_Gamma,float *Res_Layer3_Beta)
-{
-    dim3 Block2_Block(64,8,8);
-    dim3 Block_Thread(7,7);
- 	conv<<<Block2_Block,Block_Thread>>>(NULL,Res_Layer3_Neurons,Res_Layer3_Weights,Res_Layer3_bn,56,56,1,1,3,64,false,false);
-	batchnorm<<<Block2_Block,Block_Thread>>>(Res_Layer3_bn,Res_Layer3_basic,Res_mean3,Res_var3,Res_Layer3_Gamma,Res_Layer3_Beta,56,false);   
-}
+	// 3rd layer
+	conv<<<Block2_Block,Block_Thread>>>(NULL,Res_Layer3_Neurons,Res_Layer3_Weights,Res_Layer3_bn,56,56,1,1,3,64,false,false);
+	batchnorm<<<Block2_Block,Block_Thread>>>(Res_Layer3_bn,Res_Layer3_basic,Res_mean3,Res_var3,Res_Layer3_Gamma,Res_Layer3_Beta,56,false);
 
-void res_third_basic(float *Res_Layer2_Neurons,float *Res_Layer3_basic,float *Res_Layer4_Neurons)
-{
-    dim3 Block2_Block(64,8,8);
-    dim3 Block_Thread(7,7);
-	basic_block<<<Block2_Block,Block_Thread>>>(Res_Layer2_Neurons,Res_Layer3_basic,Res_Layer4_Neurons,56,true);   
-}
+	basic_block<<<Block2_Block,Block_Thread>>>(Res_Layer2_Neurons,Res_Layer3_basic,Res_Layer4_Neurons,56,true);
 
-void res_fourth_conv(float *Res_Layer4_Neurons,float *Res_Layer4_Weights,float *Res_Layer4_bn,float *Res_Layer5_Neurons,float *Res_mean4,float *Res_var4,float *Res_Layer4_Gamma,float *Res_Layer4_Beta)
-{
-    dim3 Block2_Block(64,8,8);
-    dim3 Block_Thread(7,7);
-  	conv<<<Block2_Block,Block_Thread>>>(NULL,Res_Layer4_Neurons,Res_Layer4_Weights,Res_Layer4_bn,56,56,1,1,3,64,false,false);
+	// 4th layer
+	conv<<<Block2_Block,Block_Thread>>>(NULL,Res_Layer4_Neurons,Res_Layer4_Weights,Res_Layer4_bn,56,56,1,1,3,64,false,false);
 	batchnorm<<<Block2_Block,Block_Thread>>>(Res_Layer4_bn,Res_Layer5_Neurons,Res_mean4,Res_var4,Res_Layer4_Gamma,Res_Layer4_Beta,56,true);
-}
 
-void res_fifth_conv(float *Res_Layer5_Neurons,float *Res_Layer5_Weights,float *Res_Layer5_bn,float *Res_Layer5_basic,float *Res_mean5,float *Res_var5,float *Res_Layer5_Gamma,float *Res_Layer5_Beta)
-{
-    dim3 Block2_Block(64,8,8);
-    dim3 Block_Thread(7,7);    
+	//5th layer
 	conv<<<Block2_Block,Block_Thread>>>(NULL,Res_Layer5_Neurons,Res_Layer5_Weights,Res_Layer5_bn,56,56,1,1,3,64,false,false);
 	batchnorm<<<Block2_Block,Block_Thread>>>(Res_Layer5_bn,Res_Layer5_basic,Res_mean5,Res_var5,Res_Layer5_Gamma,Res_Layer5_Beta,56,false);
-}
 
-void res_fifth_basic(float *Res_Layer4_Neurons,float *Res_Layer5_basic,float *Res_Layer6_Neurons)
-{
-    dim3 Block2_Block(64,8,8);
-    dim3 Block_Thread(7,7); 
 	basic_block<<<Block2_Block,Block_Thread>>>(Res_Layer4_Neurons,Res_Layer5_basic,Res_Layer6_Neurons,56,true);
-}
 
-void res_sixth_conv(float *Res_Layer6_Neurons,float *Res_Layer6_Weights,float *Res_Layer6_bn,float *Res_Layer7_Neurons,float *Res_mean6,float *Res_var6,float *Res_Layer6_Gamma,float *Res_Layer6_Beta)
-{
-    dim3 Block3_Block(128,4,4);
-    dim3 Block_Thread(7,7); 
+	//* Block C (6,7,8,9 layer) *//
+	/* 1 Convolution Block, 1 Identity Block */
+	dim3 Block3_Block(128,4,4);
+
+	//6th layer
 	conv<<<Block3_Block,Block_Thread>>>(NULL,Res_Layer6_Neurons,Res_Layer6_Weights,Res_Layer6_bn,56,28,2,1,3,64,false,false);
 	batchnorm<<<Block3_Block,Block_Thread>>>(Res_Layer6_bn,Res_Layer7_Neurons,Res_mean6,Res_var6,Res_Layer6_Gamma,Res_Layer6_Beta,28,true);
-}
 
-void res_seventh_conv(float *Res_Layer7_Neurons,float *Res_Layer7_Weights,float *Res_Layer7_bn,float *Res_Layer7_basic,float *Res_mean7,float *Res_var7,float *Res_Layer7_Gamma,float *Res_Layer7_Beta)
-{
-    dim3 Block3_Block(128,4,4);
-    dim3 Block_Thread(7,7); 
+	//7th layer
 	conv<<<Block3_Block,Block_Thread>>>(NULL,Res_Layer7_Neurons,Res_Layer7_Weights,Res_Layer7_bn,28,28,1,1,3,128,false,false);
 	batchnorm<<<Block3_Block,Block_Thread>>>(Res_Layer7_bn,Res_Layer7_basic,Res_mean7,Res_var7,Res_Layer7_Gamma,Res_Layer7_Beta,28,false);
-}
 
-void res_Block_B_conv(float *Res_Layer6_Neurons,float *Res_Block3_Weights,float *Res_Block3_bn,float *Res_Block3_basic,float *Res_Block3_mean,float *Res_Block3_var,float *Res_Block3_Gamma,float *Res_Block3_Beta)
-{
-    dim3 Block3_Block(128,4,4);
-    dim3 Block_Thread(7,7); 
+	//Block B output
 	conv<<<Block3_Block,Block_Thread>>>(NULL,Res_Layer6_Neurons,Res_Block3_Weights,Res_Block3_bn,56,28,2,0,1,64,false,false); 
 	batchnorm<<<Block3_Block,Block_Thread>>>(Res_Block3_bn,Res_Block3_basic,Res_Block3_mean,Res_Block3_var,Res_Block3_Gamma,Res_Block3_Beta,28,false);
-}
 
-void res_Block_B_basic(float *Res_Layer7_basic,float *Res_Block3_basic,float *Res_Layer8_Neurons)
-{
-    dim3 Block3_Block(128,4,4);
-    dim3 Block_Thread(7,7); 
 	basic_block<<<Block3_Block,Block_Thread>>>(Res_Layer7_basic,Res_Block3_basic,Res_Layer8_Neurons,28,true);
-}
 
-void res_eighth_conv(float *Res_Layer8_Neurons,float *Res_Layer8_Weights,float *Res_Layer8_bn,float *Res_Layer9_Neurons,float *Res_mean8,float *Res_var8,float *Res_Layer8_Gamma,float *Res_Layer8_Beta)
-{
-    dim3 Block3_Block(128,4,4);
-    dim3 Block_Thread(7,7); 
+	//8th layer
 	conv<<<Block3_Block,Block_Thread>>>(NULL,Res_Layer8_Neurons,Res_Layer8_Weights,Res_Layer8_bn,28,28,1,1,3,128,false,false);
 	batchnorm<<<Block3_Block,Block_Thread>>>(Res_Layer8_bn,Res_Layer9_Neurons,Res_mean8,Res_var8,Res_Layer8_Gamma,Res_Layer8_Beta,28,true);
-}
 
-void res_ninth_conv(float *Res_Layer9_Neurons,float *Res_Layer9_Weights,float *Res_Layer9_bn,float *Res_Layer9_basic,float *Res_mean9,float *Res_var9,float *Res_Layer9_Gamma,float *Res_Layer9_Beta)
-{
-    dim3 Block3_Block(128,4,4);
-    dim3 Block_Thread(7,7); 
+	//9th layer
 	conv<<<Block3_Block,Block_Thread>>>(NULL,Res_Layer9_Neurons,Res_Layer9_Weights,Res_Layer9_bn,28,28,1,1,3,128,false,false);
 	batchnorm<<<Block3_Block,Block_Thread>>>(Res_Layer9_bn,Res_Layer9_basic,Res_mean9,Res_var9,Res_Layer9_Gamma,Res_Layer9_Beta,28,false);
-}
 
-void res_ninth_basic(float *Res_Layer8_Neurons,float *Res_Layer9_basic,float *Res_Layer10_Neurons)
-{
-    dim3 Block3_Block(128,4,4);
-    dim3 Block_Thread(7,7); 
- 	basic_block<<<Block3_Block,Block_Thread>>>(Res_Layer8_Neurons,Res_Layer9_basic,Res_Layer10_Neurons,28,true);   
-}
+	basic_block<<<Block3_Block,Block_Thread>>>(Res_Layer8_Neurons,Res_Layer9_basic,Res_Layer10_Neurons,28,true);
 
-void res_tenth_conv(float *Res_Layer10_Neurons,float *Res_Layer10_Weights,float *Res_Layer10_bn,float *Res_Layer11_Neurons,float *Res_mean10,float *Res_var10,float *Res_Layer10_Gamma,float *Res_Layer10_Beta)
-{
-    dim3 Block4_Block(256,2,2);
-    dim3 Block_Thread(7,7); 
+	//* Block D (10,11,12,13 layer) *//
+	/* 1 Convolution Block, 1 Identity Block */
+	dim3 Block4_Block(256,2,2);
+
+	//10th layer
 	conv<<<Block4_Block,Block_Thread>>>(NULL,Res_Layer10_Neurons,Res_Layer10_Weights,Res_Layer10_bn,28,14,2,1,3,128,false,false);
 	batchnorm<<<Block4_Block,Block_Thread>>>(Res_Layer10_bn,Res_Layer11_Neurons,Res_mean10,Res_var10,Res_Layer10_Gamma,Res_Layer10_Beta,14,true);
-}
 
-void res_eleventh_conv(float *Res_Layer11_Neurons,float *Res_Layer11_Weights,float *Res_Layer11_bn,float *Res_Layer11_basic,float *Res_mean11,float *Res_var11,float *Res_Layer11_Gamma,float *Res_Layer11_Beta)
-{
-    dim3 Block4_Block(256,2,2);
-    dim3 Block_Thread(7,7);
+	//11th layer
 	conv<<<Block4_Block,Block_Thread>>>(NULL,Res_Layer11_Neurons,Res_Layer11_Weights,Res_Layer11_bn,14,14,1,1,3,256,false,false);
 	batchnorm<<<Block4_Block,Block_Thread>>>(Res_Layer11_bn,Res_Layer11_basic,Res_mean11,Res_var11,Res_Layer11_Gamma,Res_Layer11_Beta,14,false);
-}
 
-void res_Block_C_conv(float *Res_Layer10_Neurons,float *Res_Block4_Weights,float *Res_Block4_bn,float *Res_Block4_basic,float *Res_Block4_mean,float *Res_Block4_var,float *Res_Block4_Gamma,float *Res_Block4_Beta)
-{
-    dim3 Block4_Block(256,2,2);
-    dim3 Block_Thread(7,7);
+	//Block C output
 	conv<<<Block4_Block,Block_Thread>>>(NULL,Res_Layer10_Neurons,Res_Block4_Weights,Res_Block4_bn,28,14,2,0,1,128,false,false);
 	batchnorm<<<Block4_Block,Block_Thread>>>(Res_Block4_bn,Res_Block4_basic,Res_Block4_mean,Res_Block4_var,Res_Block4_Gamma,Res_Block4_Beta,14,false);
-}
 
-void res_Block_C_basic(float *Res_Layer11_basic,float *Res_Block4_basic,float *Res_Layer12_Neurons)
-{
-    dim3 Block4_Block(256,2,2);
-    dim3 Block_Thread(7,7);
 	basic_block<<<Block4_Block,Block_Thread>>>(Res_Layer11_basic,Res_Block4_basic,Res_Layer12_Neurons,14,true);
-}
 
-void res_twelfth_conv(float *Res_Layer12_Neurons,float *Res_Layer12_Weights,float *Res_Layer12_bn,float *Res_Layer13_Neurons,float *Res_mean12,float *Res_var12,float *Res_Layer12_Gamma,float *Res_Layer12_Beta)
-{
-    dim3 Block4_Block(256,2,2);
-    dim3 Block_Thread(7,7);
+	//12th layer
 	conv<<<Block4_Block,Block_Thread>>>(NULL,Res_Layer12_Neurons,Res_Layer12_Weights,Res_Layer12_bn,14,14,1,1,3,256,false,false);
 	batchnorm<<<Block4_Block,Block_Thread>>>(Res_Layer12_bn,Res_Layer13_Neurons,Res_mean12,Res_var12,Res_Layer12_Gamma,Res_Layer12_Beta,14,true);
-}
 
-void res_thirteenth_conv(float *Res_Layer13_Neurons,float *Res_Layer13_Weights,float *Res_Layer13_bn,float *Res_Layer13_basic,float *Res_mean13,float *Res_var13,float *Res_Layer13_Gamma,float *Res_Layer13_Beta)
-{
-    dim3 Block4_Block(256,2,2);
-    dim3 Block_Thread(7,7);
+	//13th layer
 	conv<<<Block4_Block,Block_Thread>>>(NULL,Res_Layer13_Neurons,Res_Layer13_Weights,Res_Layer13_bn,14,14,1,1,3,256,false,false); 
 	batchnorm<<<Block4_Block,Block_Thread>>>(Res_Layer13_bn,Res_Layer13_basic,Res_mean13,Res_var13,Res_Layer13_Gamma,Res_Layer13_Beta,14,false);
-}
 
-void res_thirteenth_basic(float *Res_Layer12_Neurons,float *Res_Layer13_basic,float *Res_Layer14_Neurons)
-{
-    dim3 Block4_Block(256,2,2);
-    dim3 Block_Thread(7,7);
 	basic_block<<<Block4_Block,Block_Thread>>>(Res_Layer12_Neurons,Res_Layer13_basic,Res_Layer14_Neurons,14,true);
-}
 
-void res_fourteenth_conv(float *Res_Layer14_Neurons,float *Res_Layer14_Weights,float *Res_Layer14_bn,float *Res_Layer15_Neurons,float *Res_mean14,float *Res_var14,float *Res_Layer14_Gamma,float *Res_Layer14_Beta)
-{
-	dim3 Block5_Block(512,1,1);    
-    dim3 Block_Thread(7,7);
-    conv<<<Block5_Block,Block_Thread>>>(NULL,Res_Layer14_Neurons,Res_Layer14_Weights,Res_Layer14_bn,14,7,2,1,3,256,false,false);
+	//* Block E (14,15,16,17 layer) *//
+	/* 1 Convolution Block, 1 Identity Block */
+	dim3 Block5_Block(512,1,1);
+
+	//14th layer
+	conv<<<Block5_Block,Block_Thread>>>(NULL,Res_Layer14_Neurons,Res_Layer14_Weights,Res_Layer14_bn,14,7,2,1,3,256,false,false);
 	batchnorm<<<Block5_Block,Block_Thread>>>(Res_Layer14_bn,Res_Layer15_Neurons,Res_mean14,Res_var14,Res_Layer14_Gamma,Res_Layer14_Beta,7,true);
-}
 
-void res_fifteenth_conv(float *Res_Layer15_Neurons,float *Res_Layer15_Weights,float *Res_Layer15_bn,float *Res_Layer15_basic,float *Res_mean15,float *Res_var15,float *Res_Layer15_Gamma,float *Res_Layer15_Beta)
-{
-    dim3 Block5_Block(512,1,1);    
-    dim3 Block_Thread(7,7);
+	//15th layer
 	conv<<<Block5_Block,Block_Thread>>>(NULL,Res_Layer15_Neurons,Res_Layer15_Weights,Res_Layer15_bn,7,7,1,1,3,512,false,false);
 	batchnorm<<<Block5_Block,Block_Thread>>>(Res_Layer15_bn,Res_Layer15_basic,Res_mean15,Res_var15,Res_Layer15_Gamma,Res_Layer15_Beta,7,false);
-}
 
-void res_Block_D_conv(float *Res_Layer14_Neurons,float *Res_Block5_Weights,float *Res_Block5_bn,float *Res_Block5_basic,float *Res_Block5_mean,float *Res_Block5_var,float *Res_Block5_Gamma,float *Res_Block5_Beta)
-{
-	dim3 Block5_Block(512,1,1);    
-    dim3 Block_Thread(7,7);
+	//Block D output
 	conv<<<Block5_Block,Block_Thread>>>(NULL,Res_Layer14_Neurons,Res_Block5_Weights,Res_Block5_bn,14,7,2,0,1,256,false,false);
 	batchnorm<<<Block5_Block,Block_Thread>>>(Res_Block5_bn,Res_Block5_basic,Res_Block5_mean,Res_Block5_var,Res_Block5_Gamma,Res_Block5_Beta,7,false);
-}
 
-void res_Block_D_basic(float *Res_Layer15_basic,float *Res_Block5_basic,float *Res_Layer16_Neurons)
-{
-	dim3 Block5_Block(512,1,1);    
-    dim3 Block_Thread(7,7);
 	basic_block<<<Block5_Block,Block_Thread>>>(Res_Layer15_basic,Res_Block5_basic,Res_Layer16_Neurons,7,true);
-}
 
-void res_sixteenth_conv(float *Res_Layer16_Neurons,float *Res_Layer16_Weights,float *Res_Layer16_bn,float *Res_Layer17_Neurons,float *Res_mean16,float *Res_var16,float *Res_Layer16_Gamma,float *Res_Layer16_Beta)
-{
-	dim3 Block5_Block(512,1,1);    
-    dim3 Block_Thread(7,7);
+	//16th layer
 	conv<<<Block5_Block,Block_Thread>>>(NULL,Res_Layer16_Neurons,Res_Layer16_Weights,Res_Layer16_bn,7,7,1,1,3,512,false,false);
 	batchnorm<<<Block5_Block,Block_Thread>>>(Res_Layer16_bn,Res_Layer17_Neurons,Res_mean16,Res_var16,Res_Layer16_Gamma,Res_Layer16_Beta,7,true);
-}
 
-void res_seventeenth_conv(float *Res_Layer17_Neurons,float *Res_Layer17_Weights,float *Res_Layer17_bn,float *Res_Layer17_basic,float *Res_mean17,float *Res_var17,float *Res_Layer17_Gamma,float *Res_Layer17_Beta)
-{
-	dim3 Block5_Block(512,1,1);    
-    dim3 Block_Thread(7,7);
+	//17th layer
 	conv<<<Block5_Block,Block_Thread>>>(NULL,Res_Layer17_Neurons,Res_Layer17_Weights,Res_Layer17_bn,7,7,1,1,3,512,false,false); 
 	batchnorm<<<Block5_Block,Block_Thread>>>(Res_Layer17_bn,Res_Layer17_basic,Res_mean17,Res_var17,Res_Layer17_Gamma,Res_Layer17_Beta,7,false);
-}
 
-void res_seventeenth_basic(float *Res_Layer16_Neurons,float *Res_Layer17_basic,float *Res_Layer18_Neurons)
-{
-	dim3 Block5_Block(512,1,1);    
-    dim3 Block_Thread(7,7);
 	basic_block<<<Block5_Block,Block_Thread>>>(Res_Layer16_Neurons,Res_Layer17_basic,Res_Layer18_Neurons,7,true);
-}
 
-void res_avg_pool(float *Res_Layer18_Neurons,float *Res_FC_Neurons)
-{
-    dim3 Avg_Block(512,1,1);
-    dim3 Single_Thread(1,1);
+	//* Fully Connected (18 layer) *//
+	dim3 Avg_Block(512,1,1);
 	globalavg<<<Avg_Block,Single_Thread>>>(Res_Layer18_Neurons,Res_FC_Neurons,7);
-}
 
-void res_fc(float *Res_FC_bias,float *Res_FC_Neurons,float *Res_FC_Weights,float *Res_Result_Neurons)
-{
 	dim3 FC_Block(1000,1,1);
-    dim3 Single_Thread(1,1);
 	fc<<<FC_Block,Single_Thread>>>(Res_FC_bias,Res_FC_Neurons,Res_FC_Weights,Res_Result_Neurons,512,false);
 
-    float *Res_Result_Neurons_CPU = (float *) malloc ((1000) * sizeof(float));
+	float *Res_Result_Neurons_CPU = (float *) malloc ((1000) * sizeof(float));
 	cudaMemcpy(Res_Result_Neurons_CPU, Res_Result_Neurons, (1000) * sizeof(float), cudaMemcpyDeviceToHost);
 
 	float max1 = 0.0;
@@ -2079,153 +1983,95 @@ void host2gpu_vgg16(float **Vgg_Layer1_Neurons,float **Vgg_Layer2_Neurons,float 
 	*Vgg_Result_Neurons = Vgg_Result_Neurons_data;
 }
 
-
-
-void vgg_first_conv(float *Vgg_Layer1_bias,float *Vgg_Layer1_Neurons,float *Vgg_Layer1_Weights,float *Vgg_Layer2_Neurons)
+void inference_vgg16(float *Vgg_Layer1_Neurons,float *Vgg_Layer2_Neurons,float *Vgg_Layer3_Neurons,float *Vgg_Layer4_Neurons,
+					float *Vgg_Layer5_Neurons,float *Vgg_Layer6_Neurons,float *Vgg_Layer7_Neurons,float *Vgg_Layer8_Neurons,
+					float *Vgg_Layer9_Neurons,float *Vgg_Layer10_Neurons,float *Vgg_Layer11_Neurons,float *Vgg_Layer12_Neurons,
+					float *Vgg_Layer13_Neurons,float *Vgg_Layer14_Neurons,float *Vgg_Layer15_Neurons,float *Vgg_Layer16_Neurons,
+                    float *Vgg_Layer1_bias,float *Vgg_Layer2_bias,float *Vgg_Layer3_bias,float *Vgg_Layer4_bias,
+                    float *Vgg_Layer5_bias,float *Vgg_Layer6_bias,float *Vgg_Layer7_bias,float *Vgg_Layer8_bias,
+                    float *Vgg_Layer9_bias,float *Vgg_Layer10_bias,float *Vgg_Layer11_bias,float *Vgg_Layer12_bias,
+                    float *Vgg_Layer13_bias,float *Vgg_Layer14_bias,float *Vgg_Layer15_bias,float *Vgg_Layer16_bias,
+                    float *Vgg_Layer1_Weights,float *Vgg_Layer2_Weights,float *Vgg_Layer3_Weights,float *Vgg_Layer4_Weights,
+                    float *Vgg_Layer5_Weights,float *Vgg_Layer6_Weights,float *Vgg_Layer7_Weights,float *Vgg_Layer8_Weights,
+                    float *Vgg_Layer9_Weights,float *Vgg_Layer10_Weights,float *Vgg_Layer11_Weights,float *Vgg_Layer12_Weights,
+                    float *Vgg_Layer13_Weights,float *Vgg_Layer14_Weights,float *Vgg_Layer15_Weights,float *Vgg_Layer16_Weights,
+                    float *Vgg_Layer2_pool,float *Vgg_Layer4_pool,float *Vgg_Layer7_pool,float *Vgg_Layer10_pool,
+					float *Vgg_Layer13_pool,float *Vgg_Result_Neurons)
 {
-	dim3 Block1_Block(64,32,32);
+    /* 1st Layer */
     dim3 Block_Thread(7,7);
+    dim3 Block1_Block(64,32,32);
 	first<<<Block1_Block,Block_Thread>>>(Vgg_Layer1_bias,Vgg_Layer1_Neurons,Vgg_Layer1_Weights,Vgg_Layer2_Neurons,224,224,1,1,3,3,true,true);
-}
 
-void vgg_second_conv(float *Vgg_Layer2_bias,float *Vgg_Layer2_Neurons,float *Vgg_Layer2_Weights,float *Vgg_Layer2_pool)
-{
-	dim3 Block1_Block(64,32,32);
-    dim3 Block_Thread(7,7);
+    /* 2nd Layer */
 	conv<<<Block1_Block,Block_Thread>>>(Vgg_Layer2_bias,Vgg_Layer2_Neurons,Vgg_Layer2_Weights,Vgg_Layer2_pool,224,224,1,1,3,64,true,true);
-}
 
-void vgg_second_pool(float *Vgg_Layer2_pool,float *Vgg_Layer3_Neurons)
-{
 	dim3 Block1_Pool_Block(64,16,16);
-	dim3 Block_Thread(7,7);
     max<<<Block1_Pool_Block,Block_Thread>>>(Vgg_Layer2_pool,Vgg_Layer3_Neurons,224,112,2,0,2);
-}
 
-void vgg_third_conv(float *Vgg_Layer3_bias,float *Vgg_Layer3_Neurons,float *Vgg_Layer3_Weights,float *Vgg_Layer4_Neurons)
-{
+    /* 3rd Layer */
 	dim3 Block2_Block(128,16,16);
-	dim3 Block_Thread(7,7);
 	conv<<<Block2_Block,Block_Thread>>>(Vgg_Layer3_bias,Vgg_Layer3_Neurons,Vgg_Layer3_Weights,Vgg_Layer4_Neurons,112,112,1,1,3,64,true,true);
-}
 
-void vgg_fourth_conv(float *Vgg_Layer4_bias,float *Vgg_Layer4_Neurons,float *Vgg_Layer4_Weights,float *Vgg_Layer4_pool)
-{
-	dim3 Block2_Block(128,16,16);
-	dim3 Block_Thread(7,7);
+	/* 4th Layer */    
 	conv<<<Block2_Block,Block_Thread>>>(Vgg_Layer4_bias,Vgg_Layer4_Neurons,Vgg_Layer4_Weights,Vgg_Layer4_pool,112,112,1,1,3,128,true,true);
-}
 
-void vgg_fourth_pool(float *Vgg_Layer4_pool,float *Vgg_Layer5_Neurons)
-{
 	dim3 Block2_Pool_Block(128,8,8);
-	dim3 Block_Thread(7,7);
     max<<<Block2_Pool_Block,Block_Thread>>>(Vgg_Layer4_pool,Vgg_Layer5_Neurons,112,56,2,0,2);
-}
 
-void vgg_fifth_conv(float *Vgg_Layer5_bias,float *Vgg_Layer5_Neurons,float *Vgg_Layer5_Weights,float *Vgg_Layer6_Neurons)
-{
+    /* 5th Layer */
 	dim3 Block3_Block(256,8,8);
-	dim3 Block_Thread(7,7);
 	conv<<<Block3_Block,Block_Thread>>>(Vgg_Layer5_bias,Vgg_Layer5_Neurons,Vgg_Layer5_Weights,Vgg_Layer6_Neurons,56,56,1,1,3,128,true,true);
-}
 
-void vgg_sixth_conv(float *Vgg_Layer6_bias,float *Vgg_Layer6_Neurons,float *Vgg_Layer6_Weights,float *Vgg_Layer7_Neurons)
-{
-	dim3 Block3_Block(256,8,8);
-	dim3 Block_Thread(7,7);
-	conv<<<Block3_Block,Block_Thread>>>(Vgg_Layer6_bias,Vgg_Layer6_Neurons,Vgg_Layer6_Weights,Vgg_Layer7_Neurons,56,56,1,1,3,256,true,true);
-}
+    /* 6th Layer */
+    conv<<<Block3_Block,Block_Thread>>>(Vgg_Layer6_bias,Vgg_Layer6_Neurons,Vgg_Layer6_Weights,Vgg_Layer7_Neurons,56,56,1,1,3,256,true,true);
 
-void vgg_seventh_conv(float *Vgg_Layer7_bias,float *Vgg_Layer7_Neurons,float *Vgg_Layer7_Weights,float *Vgg_Layer7_pool)
-{
-	dim3 Block3_Block(256,8,8);
-	dim3 Block_Thread(7,7);
+    /* 7th Layer */
 	conv<<<Block3_Block,Block_Thread>>>(Vgg_Layer7_bias,Vgg_Layer7_Neurons,Vgg_Layer7_Weights,Vgg_Layer7_pool,56,56,1,1,3,256,true,true);
-}
 
-void vgg_seventh_pool(float *Vgg_Layer7_pool,float *Vgg_Layer8_Neurons)
-{
 	dim3 Block3_Pool_Block(256,4,4);
-	dim3 Block_Thread(7,7);
     max<<<Block3_Pool_Block,Block_Thread>>>(Vgg_Layer7_pool,Vgg_Layer8_Neurons,56,28,2,0,2);
-}
 
-void vgg_eighth_conv(float *Vgg_Layer8_bias,float *Vgg_Layer8_Neurons,float *Vgg_Layer8_Weights,float *Vgg_Layer9_Neurons)
-{
+    /* 8th Layer */
 	dim3 Block4_Block(512,4,4);
-	dim3 Block_Thread(7,7);
 	conv<<<Block4_Block,Block_Thread>>>(Vgg_Layer8_bias,Vgg_Layer8_Neurons,Vgg_Layer8_Weights,Vgg_Layer9_Neurons,28,28,1,1,3,256,true,true);
-}
 
-void vgg_ninth_conv(float *Vgg_Layer9_bias,float *Vgg_Layer9_Neurons,float *Vgg_Layer9_Weights,float *Vgg_Layer10_Neurons)
-{
-	dim3 Block4_Block(512,4,4);
-	dim3 Block_Thread(7,7);
+    /* 9th Layer */
     conv<<<Block4_Block,Block_Thread>>>(Vgg_Layer9_bias,Vgg_Layer9_Neurons,Vgg_Layer9_Weights,Vgg_Layer10_Neurons,28,28,1,1,3,512,true,true);
-}
 
-void vgg_tenth_conv(float *Vgg_Layer10_bias,float *Vgg_Layer10_Neurons,float *Vgg_Layer10_Weights,float *Vgg_Layer10_pool)
-{
-	dim3 Block4_Block(512,4,4);
-	dim3 Block_Thread(7,7);
+    /* 10th Layer */
     conv<<<Block4_Block,Block_Thread>>>(Vgg_Layer10_bias,Vgg_Layer10_Neurons,Vgg_Layer10_Weights,Vgg_Layer10_pool,28,28,1,1,3,512,true,true);
-}
 
-void vgg_tenth_pool(float *Vgg_Layer10_pool,float *Vgg_Layer11_Neurons)
-{
 	dim3 Block4_Pool_Block(512,2,2);
-	dim3 Block_Thread(7,7);	
     max<<<Block4_Pool_Block,Block_Thread>>>(Vgg_Layer10_pool,Vgg_Layer11_Neurons,28,14,2,0,2);
-}
 
-void vgg_eleventh_conv(float *Vgg_Layer11_bias,float *Vgg_Layer11_Neurons,float *Vgg_Layer11_Weights,float *Vgg_Layer12_Neurons)
-{
+    /* 11th Layer */
 	dim3 Block5_Block(512,2,2);
-	dim3 Block_Thread(7,7);
 	conv<<<Block5_Block,Block_Thread>>>(Vgg_Layer11_bias,Vgg_Layer11_Neurons,Vgg_Layer11_Weights,Vgg_Layer12_Neurons,14,14,1,1,3,512,true,true);
-}
 
-void vgg_twelfth_conv(float *Vgg_Layer12_bias,float *Vgg_Layer12_Neurons,float *Vgg_Layer12_Weights,float *Vgg_Layer13_Neurons)
-{
-	dim3 Block5_Block(512,2,2);
-	dim3 Block_Thread(7,7);
+    /* 12th Layer */
     conv<<<Block5_Block,Block_Thread>>>(Vgg_Layer12_bias,Vgg_Layer12_Neurons,Vgg_Layer12_Weights,Vgg_Layer13_Neurons,14,14,1,1,3,512,true,true);
-}
 
-void vgg_thirteenth_conv(float *Vgg_Layer13_bias,float *Vgg_Layer13_Neurons,float *Vgg_Layer13_Weights,float *Vgg_Layer13_pool)
-{
-	dim3 Block5_Block(512,2,2);
-	dim3 Block_Thread(7,7);
+    /* 13th Layer */
     conv<<<Block5_Block,Block_Thread>>>(Vgg_Layer13_bias,Vgg_Layer13_Neurons,Vgg_Layer13_Weights,Vgg_Layer13_pool,14,14,1,1,3,512,true,true);
-}
 
-void vgg_thirteenth_pool(float *Vgg_Layer13_pool,float *Vgg_Layer14_Neurons)
-{
 	dim3 Block5_Pool_Block(512,1,1);
-	dim3 Block_Thread(7,7);
     max<<<Block5_Pool_Block,Block_Thread>>>(Vgg_Layer13_pool,Vgg_Layer14_Neurons,14,7,2,0,2);
-}
 
-void vgg_first_fc(float *Vgg_Layer14_bias,float *Vgg_Layer14_Neurons,float *Vgg_Layer14_Weights,float *Vgg_Layer15_Neurons)
-{
+    /* 14th Layer */
 	dim3 FC1_Block(4096,1,1);
 	dim3 FC1_Thread(1,1);
-	fc<<<FC1_Block,FC1_Thread>>>(Vgg_Layer14_bias,Vgg_Layer14_Neurons,Vgg_Layer14_Weights,Vgg_Layer15_Neurons,(7*7*512),true);
-}
+	fc<<<FC1_Block,FC1_Thread>>>(Vgg_Layer14_bias, Vgg_Layer14_Neurons, Vgg_Layer14_Weights, Vgg_Layer15_Neurons, (7*7*512), true);
 
-void vgg_second_fc(float *Vgg_Layer15_bias,float *Vgg_Layer15_Neurons,float *Vgg_Layer15_Weights,float *Vgg_Layer16_Neurons)
-{
+    /* 15th Layer */
 	dim3 FC2_Block(4096,1,1);
 	dim3 FC2_Thread(1,1);
-	fc<<<FC2_Block,FC2_Thread>>>(Vgg_Layer15_bias,Vgg_Layer15_Neurons,Vgg_Layer15_Weights,Vgg_Layer16_Neurons,4096,true);
-}
+	fc<<<FC2_Block,FC2_Thread>>>(Vgg_Layer15_bias, Vgg_Layer15_Neurons, Vgg_Layer15_Weights, Vgg_Layer16_Neurons, 4096, true);
 
-void vgg_third_fc(float *Vgg_Layer16_bias,float *Vgg_Layer16_Neurons,float *Vgg_Layer16_Weights,float *Vgg_Result_Neurons)
-{
+    /* 16th Layer */
 	dim3 FC3_Block(1000,1,1);
 	dim3 FC3_Thread(1,1);
-	fc<<<FC3_Block,FC3_Thread>>>(Vgg_Layer16_bias,Vgg_Layer16_Neurons,Vgg_Layer16_Weights,Vgg_Result_Neurons,4096,false);
+	fc<<<FC3_Block,FC3_Thread>>>(Vgg_Layer16_bias, Vgg_Layer16_Neurons, Vgg_Layer16_Weights, Vgg_Result_Neurons, 4096, false);
 
 	float *Vgg_Result_Neurons_CPU = (float *) malloc ((1000) * sizeof(float));
 	cudaMemcpy(Vgg_Result_Neurons_CPU, Vgg_Result_Neurons, (1000) * sizeof(float), cudaMemcpyDeviceToHost);
@@ -2330,157 +2176,4 @@ void free_vgg16(float *Vgg_Layer1_Neurons,float *Vgg_Layer2_Neurons,float *Vgg_L
 	cudaFree(Vgg_Layer13_pool);
 	cudaFree(Vgg_Result_Neurons);
 }
-
-void inference_alexnet(float *Alex_Layer1_Neurons,float *Alex_Layer2_Neurons,float *Alex_Layer3_Neurons,float *Alex_Layer4_Neurons,
-					float *Alex_Layer5_Neurons,float *Alex_Layer6_Neurons,float *Alex_Layer7_Neurons,float *Alex_Layer8_Neurons,
-                    float *Alex_Layer1_bias,float *Alex_Layer2_bias,float *Alex_Layer3_bias,float *Alex_Layer4_bias,
-                    float *Alex_Layer5_bias,float *Alex_Layer6_bias,float *Alex_Layer7_bias,float *Alex_Layer8_bias,
-                    float *Alex_Layer1_Weights,float *Alex_Layer2_Weights,float *Alex_Layer3_Weights,float *Alex_Layer4_Weights,
-                    float *Alex_Layer5_Weights,float * Alex_Layer6_Weights,float *Alex_Layer7_Weights,float *Alex_Layer8_Weights,
-                    float *Alex_Layer1_pool,float *Alex_Layer2_pool,float *Alex_Layer5_pool,
-					float *Alex_Layer1_norm,float *Alex_Layer2_norm,float *Alex_Result_Neurons,
-					int stop)
-{
-	alex_first_conv(Alex_Layer1_bias,Alex_Layer1_Neurons,Alex_Layer1_Weights,Alex_Layer1_norm);
-	alex_fisrt_norm(Alex_Layer1_norm,Alex_Layer1_pool);
-	alex_first_pool(Alex_Layer1_pool,Alex_Layer2_Neurons);
-	alex_second_conv(Alex_Layer2_bias,Alex_Layer2_Neurons,Alex_Layer2_Weights,Alex_Layer2_norm);
-	alex_second_norm(Alex_Layer2_norm,Alex_Layer2_pool);
-	alex_second_pool(Alex_Layer2_pool,Alex_Layer3_Neurons);
-	stop += 1
-	while(stop == 3){
-		continue;
-	}
-	alex_third_conv(Alex_Layer3_bias,Alex_Layer3_Neurons,Alex_Layer3_Weights,Alex_Layer4_Neurons);
-	alex_fourth_conv(Alex_Layer4_bias,Alex_Layer4_Neurons,Alex_Layer4_Weights,Alex_Layer5_Neurons);
-	alex_fifth_conv(Alex_Layer5_bias,Alex_Layer5_Neurons,Alex_Layer5_Weights,Alex_Layer5_pool);
-	alex_fifth_pool(Alex_Layer5_pool,Alex_Layer6_Neurons);
-	alex_first_fc(Alex_Layer6_bias,Alex_Layer6_Neurons,Alex_Layer6_Weights,Alex_Layer7_Neurons);
-	alex_second_fc(Alex_Layer7_bias,Alex_Layer7_Neurons,Alex_Layer7_Weights,Alex_Layer8_Neurons);
-	alex_third_fc(Alex_Layer8_bias,Alex_Layer8_Neurons,Alex_Layer8_Weights,Alex_Result_Neurons);
 }
-
-void inference_resnet18(float *Res_Layer1_Neurons,float *Res_Layer2_Neurons,float *Res_Layer3_Neurons,float *Res_Layer4_Neurons,
-					float *Res_Layer5_Neurons,float *Res_Layer6_Neurons,float *Res_Layer7_Neurons,float *Res_Layer8_Neurons,
-					float *Res_Layer9_Neurons,float *Res_Layer10_Neurons,float *Res_Layer11_Neurons,float *Res_Layer12_Neurons,
-					float *Res_Layer13_Neurons,float *Res_Layer14_Neurons,float *Res_Layer15_Neurons,float *Res_Layer16_Neurons,
-					float *Res_Layer17_Neurons,float *Res_Layer18_Neurons,
-                    float *Res_Layer1_Weights,float *Res_Layer2_Weights,float *Res_Layer3_Weights,float *Res_Layer4_Weights,
-                    float *Res_Layer5_Weights,float *Res_Layer6_Weights,float *Res_Layer7_Weights,float *Res_Layer8_Weights,
-                    float *Res_Layer9_Weights,float *Res_Layer10_Weights,float *Res_Layer11_Weights,float *Res_Layer12_Weights,
-                    float *Res_Layer13_Weights,float *Res_Layer14_Weights,float *Res_Layer15_Weights,float *Res_Layer16_Weights,
-                    float *Res_Layer17_Weights,float *Res_Block3_Weights,float *Res_Block4_Weights,float *Res_Block5_Weights,
-                    float *Res_Layer1_Gamma,float *Res_Layer2_Gamma,float *Res_Layer3_Gamma,float *Res_Layer4_Gamma,
-                    float *Res_Layer5_Gamma,float *Res_Layer6_Gamma,float *Res_Layer7_Gamma,float *Res_Layer8_Gamma,
-                    float *Res_Layer9_Gamma,float *Res_Layer10_Gamma,float *Res_Layer11_Gamma,float *Res_Layer12_Gamma,
-                    float *Res_Layer13_Gamma,float *Res_Layer14_Gamma,float *Res_Layer15_Gamma,float *Res_Layer16_Gamma,
-                    float *Res_Layer17_Gamma,float *Res_Block3_Gamma,float *Res_Block4_Gamma,float *Res_Block5_Gamma,
-                    float *Res_Layer1_Beta,float *Res_Layer2_Beta,float *Res_Layer3_Beta,float *Res_Layer4_Beta,
-                    float *Res_Layer5_Beta,float *Res_Layer6_Beta,float *Res_Layer7_Beta,float *Res_Layer8_Beta,
-                    float *Res_Layer9_Beta,float *Res_Layer10_Beta,float *Res_Layer11_Beta,float *Res_Layer12_Beta,
-                    float *Res_Layer13_Beta,float *Res_Layer14_Beta,float *Res_Layer15_Beta,float *Res_Layer16_Beta,
-                    float *Res_Layer17_Beta,float *Res_Block3_Beta,float *Res_Block4_Beta,float *Res_Block5_Beta,
-                    float *Res_mean1,float *Res_mean2,float *Res_mean3,float *Res_mean4,float *Res_mean5,
-                    float *Res_mean6,float *Res_mean7,float *Res_mean8,float *Res_mean9,float *Res_mean10,
-                    float *Res_mean11,float *Res_mean12,float *Res_mean13,float *Res_mean14,float *Res_mean15,
-                    float *Res_mean16,float *Res_mean17,float *Res_Block3_mean,float *Res_Block4_mean,float *Res_Block5_mean,
-                    float *Res_var1,float *Res_var2,float *Res_var3,float *Res_var4,float *Res_var5,
-                    float *Res_var6,float *Res_var7,float *Res_var8,float *Res_var9,float *Res_var10,
-                    float *Res_var11,float *Res_var12,float *Res_var13,float *Res_var14,float *Res_var15,
-                    float *Res_var16,float *Res_var17,float *Res_Block3_var,float *Res_Block4_var,float *Res_Block5_var,
-                    float *Res_FC_bias,float *Res_FC_Weights,
-					float *Res_Layer3_basic,float *Res_Layer5_basic,float *Res_Layer7_basic,float *Res_Layer9_basic,
-					float *Res_Layer11_basic,float *Res_Layer13_basic,float *Res_Layer15_basic,float *Res_Layer17_basic,
-					float *Res_Block3_basic,float *Res_Block4_basic,float *Res_Block5_basic,
-					float *Res_Layer1_bn,float *Res_Layer2_bn,float *Res_Layer3_bn,float *Res_Layer4_bn,
-					float *Res_Layer5_bn,float *Res_Layer6_bn,float *Res_Layer7_bn,float *Res_Layer8_bn,
-					float *Res_Layer9_bn,float *Res_Layer10_bn,float *Res_Layer11_bn,float *Res_Layer12_bn,
-					float *Res_Layer13_bn,float *Res_Layer14_bn,float *Res_Layer15_bn,float *Res_Layer16_bn,
-					float *Res_Layer17_bn,float *Res_Block3_bn,float *Res_Block4_bn,float *Res_Block5_bn,
-					float *Res_Layer1_pool,float *Res_FC_Neurons,float *Res_Result_Neurons,
-					int stop)
-{
-	res_first_conv(Res_Layer1_Neurons,Res_Layer1_Weights,Res_Layer1_bn,Res_Layer1_pool,Res_mean1,Res_var1,Res_Layer1_Gamma,Res_Layer1_Beta);
-	res_first_pool(Res_Layer1_pool,Res_Layer2_Neurons);
-	res_second_conv(Res_Layer2_Neurons,Res_Layer2_Weights,Res_Layer2_bn,Res_Layer3_Neurons,Res_mean2,Res_var2,Res_Layer2_Gamma,Res_Layer2_Beta);
-	res_third_conv(Res_Layer3_Neurons,Res_Layer3_Weights,Res_Layer3_bn,Res_Layer3_basic,Res_mean3,Res_var3,Res_Layer3_Gamma,Res_Layer3_Beta);
-	res_third_basic(Res_Layer2_Neurons,Res_Layer3_basic,Res_Layer4_Neurons);
-	res_fourth_conv(Res_Layer4_Neurons,Res_Layer4_Weights,Res_Layer4_bn,Res_Layer5_Neurons,Res_mean4,Res_var4,Res_Layer4_Gamma,Res_Layer4_Beta);
-	res_fifth_conv(Res_Layer5_Neurons,Res_Layer5_Weights,Res_Layer5_bn,Res_Layer5_basic,Res_mean5,Res_var5,Res_Layer5_Gamma,Res_Layer5_Beta);
-	res_fifth_basic(Res_Layer4_Neurons,Res_Layer5_basic,Res_Layer6_Neurons);
-	res_sixth_conv(Res_Layer6_Neurons,Res_Layer6_Weights,Res_Layer6_bn,Res_Layer7_Neurons,Res_mean6,Res_var6,Res_Layer6_Gamma,Res_Layer6_Beta);
-	res_seventh_conv(Res_Layer7_Neurons,Res_Layer7_Weights,Res_Layer7_bn,Res_Layer7_basic,Res_mean7,Res_var7,Res_Layer7_Gamma,Res_Layer7_Beta);
-	res_Block_B_conv(Res_Layer6_Neurons,Res_Block3_Weights,Res_Block3_bn,Res_Block3_basic,Res_Block3_mean,Res_Block3_var,Res_Block3_Gamma,Res_Block3_Beta);
-	res_Block_B_basic(Res_Layer7_basic,Res_Block3_basic,Res_Layer8_Neurons);
-	stop += 1
-	while(stop == 3){
-		continue;
-	}
-	res_eighth_conv(Res_Layer8_Neurons,Res_Layer8_Weights,Res_Layer8_bn,Res_Layer9_Neurons,Res_mean8,Res_var8,Res_Layer8_Gamma,Res_Layer8_Beta);
-	res_ninth_conv(Res_Layer9_Neurons,Res_Layer9_Weights,Res_Layer9_bn,Res_Layer9_basic,Res_mean9,Res_var9,Res_Layer9_Gamma,Res_Layer9_Beta);
-	res_ninth_basic(Res_Layer8_Neurons,Res_Layer9_basic,Res_Layer10_Neurons);
-	res_tenth_conv(Res_Layer10_Neurons,Res_Layer10_Weights,Res_Layer10_bn,Res_Layer11_Neurons,Res_mean10,Res_var10,Res_Layer10_Gamma,Res_Layer10_Beta);
-	res_eleventh_conv(Res_Layer11_Neurons,Res_Layer11_Weights,Res_Layer11_bn,Res_Layer11_basic,Res_mean11,Res_var11,Res_Layer11_Gamma,Res_Layer11_Beta);
-	res_Block_C_conv(Res_Layer10_Neurons,Res_Block4_Weights,Res_Block4_bn,Res_Block4_basic,Res_Block4_mean,Res_Block4_var,Res_Block4_Gamma,Res_Block4_Beta);
-	res_Block_C_basic(Res_Layer11_basic,Res_Block4_basic,Res_Layer12_Neurons);
-	res_twelfth_conv(Res_Layer12_Neurons,Res_Layer12_Weights,Res_Layer12_bn,Res_Layer13_Neurons,Res_mean12,Res_var12,Res_Layer12_Gamma,Res_Layer12_Beta);
-	res_thirteenth_conv(Res_Layer13_Neurons,Res_Layer13_Weights,Res_Layer13_bn,Res_Layer13_basic,Res_mean13,Res_var13,Res_Layer13_Gamma,Res_Layer13_Beta);
-	res_thirteenth_basic(Res_Layer12_Neurons,Res_Layer13_basic,Res_Layer14_Neurons);
-	res_fourteenth_conv(Res_Layer14_Neurons,Res_Layer14_Weights,Res_Layer14_bn,Res_Layer15_Neurons,Res_mean14,Res_var14,Res_Layer14_Gamma,Res_Layer14_Beta);
-	res_fifteenth_conv(Res_Layer15_Neurons,Res_Layer15_Weights,Res_Layer15_bn,Res_Layer15_basic,Res_mean15,Res_var15,Res_Layer15_Gamma,Res_Layer15_Beta);
-	res_Block_D_conv(Res_Layer14_Neurons,Res_Block5_Weights,Res_Block5_bn,Res_Block5_basic,Res_Block5_mean,Res_Block5_var,Res_Block5_Gamma,Res_Block5_Beta);
-	res_Block_D_basic(Res_Layer15_basic,Res_Block5_basic,Res_Layer16_Neurons);
-	res_sixteenth_conv(Res_Layer16_Neurons,Res_Layer16_Weights,Res_Layer16_bn,Res_Layer17_Neurons,Res_mean16,Res_var16,Res_Layer16_Gamma,Res_Layer16_Beta);
-	res_seventeenth_conv(Res_Layer17_Neurons,Res_Layer17_Weights,Res_Layer17_bn,Res_Layer17_basic,Res_mean17,Res_var17,Res_Layer17_Gamma,Res_Layer17_Beta);
-	res_seventeenth_basic(Res_Layer16_Neurons,Res_Layer17_basic,Res_Layer18_Neurons);
-	res_avg_pool(Res_Layer18_Neurons,Res_FC_Neurons);
-	res_fc(Res_FC_bias,Res_FC_Neurons,Res_FC_Weights,Res_Result_Neurons);
-}
-
-void inference_vgg16(float *Vgg_Layer1_Neurons,float *Vgg_Layer2_Neurons,float *Vgg_Layer3_Neurons,float *Vgg_Layer4_Neurons,
-					float *Vgg_Layer5_Neurons,float *Vgg_Layer6_Neurons,float *Vgg_Layer7_Neurons,float *Vgg_Layer8_Neurons,
-					float *Vgg_Layer9_Neurons,float *Vgg_Layer10_Neurons,float *Vgg_Layer11_Neurons,float *Vgg_Layer12_Neurons,
-					float *Vgg_Layer13_Neurons,float *Vgg_Layer14_Neurons,float *Vgg_Layer15_Neurons,float *Vgg_Layer16_Neurons,
-                    float *Vgg_Layer1_bias,float *Vgg_Layer2_bias,float *Vgg_Layer3_bias,float *Vgg_Layer4_bias,
-                    float *Vgg_Layer5_bias,float *Vgg_Layer6_bias,float *Vgg_Layer7_bias,float *Vgg_Layer8_bias,
-                    float *Vgg_Layer9_bias,float *Vgg_Layer10_bias,float *Vgg_Layer11_bias,float *Vgg_Layer12_bias,
-                    float *Vgg_Layer13_bias,float *Vgg_Layer14_bias,float *Vgg_Layer15_bias,float *Vgg_Layer16_bias,
-                    float *Vgg_Layer1_Weights,float *Vgg_Layer2_Weights,float *Vgg_Layer3_Weights,float *Vgg_Layer4_Weights,
-                    float *Vgg_Layer5_Weights,float *Vgg_Layer6_Weights,float *Vgg_Layer7_Weights,float *Vgg_Layer8_Weights,
-                    float *Vgg_Layer9_Weights,float *Vgg_Layer10_Weights,float *Vgg_Layer11_Weights,float *Vgg_Layer12_Weights,
-                    float *Vgg_Layer13_Weights,float *Vgg_Layer14_Weights,float *Vgg_Layer15_Weights,float *Vgg_Layer16_Weights,
-                    float *Vgg_Layer2_pool,float *Vgg_Layer4_pool,float *Vgg_Layer7_pool,float *Vgg_Layer10_pool,
-					float *Vgg_Layer13_pool,float *Vgg_Result_Neurons,
-					int stop)
-{
-	vgg_first_conv(Vgg_Layer1_bias,Vgg_Layer1_Neurons,Vgg_Layer1_Weights,Vgg_Layer2_Neurons);
-	vgg_second_conv(Vgg_Layer2_bias,Vgg_Layer2_Neurons,Vgg_Layer2_Weights,Vgg_Layer2_pool);
-	vgg_second_pool(Vgg_Layer2_pool,Vgg_Layer3_Neurons);
-	vgg_third_conv(Vgg_Layer3_bias,Vgg_Layer3_Neurons,Vgg_Layer3_Weights,Vgg_Layer4_Neurons);
-	vgg_fourth_conv(Vgg_Layer4_bias,Vgg_Layer4_Neurons,Vgg_Layer4_Weights,Vgg_Layer4_pool);
-	vgg_fourth_pool(Vgg_Layer4_pool,Vgg_Layer5_Neurons);
-	vgg_fifth_conv(Vgg_Layer5_bias,Vgg_Layer5_Neurons,Vgg_Layer5_Weights,Vgg_Layer6_Neurons);
-	vgg_sixth_conv(Vgg_Layer6_bias,Vgg_Layer6_Neurons,Vgg_Layer6_Weights,Vgg_Layer7_Neurons);
-	vgg_seventh_conv(Vgg_Layer7_bias,Vgg_Layer7_Neurons,Vgg_Layer7_Weights,Vgg_Layer7_pool);
-	vgg_seventh_pool(Vgg_Layer7_pool,Vgg_Layer8_Neurons);
-	stop += 1
-	while(stop == 3){
-		continue;
-	}
-	vgg_eighth_conv(Vgg_Layer8_bias,Vgg_Layer8_Neurons,Vgg_Layer8_Weights,Vgg_Layer9_Neurons);
-	vgg_ninth_conv(Vgg_Layer9_bias,Vgg_Layer9_Neurons,Vgg_Layer9_Weights,Vgg_Layer10_Neurons);
-	vgg_tenth_conv(Vgg_Layer10_bias,Vgg_Layer10_Neurons,Vgg_Layer10_Weights,Vgg_Layer10_pool);
-	vgg_tenth_pool(Vgg_Layer10_pool,Vgg_Layer11_Neurons);
-	vgg_eleventh_conv(Vgg_Layer11_bias,Vgg_Layer11_Neurons,Vgg_Layer11_Weights,Vgg_Layer12_Neurons);
-	vgg_twelfth_conv(Vgg_Layer12_bias,Vgg_Layer12_Neurons,Vgg_Layer12_Weights,Vgg_Layer13_Neurons);
-	vgg_thirteenth_conv(Vgg_Layer13_bias,Vgg_Layer13_Neurons,Vgg_Layer13_Weights,Vgg_Layer13_pool);
-	vgg_thirteenth_pool(Vgg_Layer13_pool,Vgg_Layer14_Neurons);
-	vgg_first_fc(Vgg_Layer14_bias,Vgg_Layer14_Neurons,Vgg_Layer14_Weights,Vgg_Layer15_Neurons);
-	vgg_second_fc(Vgg_Layer15_bias,Vgg_Layer15_Neurons,Vgg_Layer15_Weights,Vgg_Layer16_Neurons);
-	vgg_third_fc(Vgg_Layer16_bias,Vgg_Layer16_Neurons,Vgg_Layer16_Weights,Vgg_Result_Neurons);
-}
-}
-
-
-
-
